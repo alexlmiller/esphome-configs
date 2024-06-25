@@ -7,13 +7,11 @@ substitutions:
 esphome:
   name: $name
   project:
-    name: wyze.outdoor_plug
+    name: alexlmiller.wyze_outdoor_plug
     version: 1.0.0
 
   platform: ESP32
   board: esp-wrover-kit
-  project:
-    name: wyze.outdoor_plug
 
 # Enable logging
 logger:
