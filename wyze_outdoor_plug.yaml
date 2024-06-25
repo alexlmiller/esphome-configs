@@ -1,7 +1,5 @@
 substitutions:
 
-  project_name: wyze.outdoor_plug
-
   # Higher value gives lower watt readout
   current_res: "0.001"
   # Lower value gives lower voltage readout
@@ -11,7 +9,8 @@ esphome:
   name: wyze-outdoor-1-hay-barn
   platform: ESP32
   board: esp-wrover-kit
-
+  project:
+    name: wyze.outdoor_plug
 
 # Enable logging
 logger:
