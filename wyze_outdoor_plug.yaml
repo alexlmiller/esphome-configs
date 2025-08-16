@@ -1,10 +1,18 @@
+### NOTES ###
+# Ensure the following secrets are set
+## api_key (for home assistant api)
+## ota_password
+## wifi_ssid
+## wifi_password
+## wifi_fallback_password
+
 substitutions:
-  display_name: Wyze Outdoor 2 - Chicken Coop
-  tech_name: wyze-outdoor-2-chicken-coop
-  # Higher value gives lower watt readout
-  current_res: "0.001"
-  # Lower value gives lower voltage readout
-  voltage_div: "770"
+  ### CUSTOMIZE THESE TWO NAMES ###
+  display_name: Wyze Outdoor Plug
+  tech_name: wyze-outdoor-plug
+  
+  current_res: "0.001"  # Higher value gives lower watt readout
+  voltage_div: "770"   # Lower value gives lower voltage readout
 
 esphome:
   name: ${tech_name}
