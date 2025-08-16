@@ -1,0 +1,457 @@
+### NOTES ###
+# Ensure the following secrets are set
+## api_key (for home assistant api)
+## ota_password
+## wifi_ssid
+## wifi_password
+## wifi_fallback_password
+
+######### DEVICE SPECIFIC CONFIG #########
+
+substitutions:
+  ### CUSTOMIZE THESE TWO NAMES ###
+  display_name: Emporia Vue - House External
+  tech_name: emporia-vue-house-external
+  
+  ### CIRCUIT DEFINITIONS ###
+  ## Circuit multipliers (use 2 for 240V, 1 for 120V) / Phase assignments (phase_a or phase_b) ##
+
+  ### Circuit 1 ###
+  cir1_name: "House Heat Pump"
+  cir1_multiply: "2"
+  cir1_phase: "phase_a"
+
+  ### Circuit 2 ###
+  cir2_name: "Septic Lift A"
+  cir2_multiply: "1"
+  cir2_phase: "phase_a"
+
+  ### Circuit 3 ###
+  cir3_name: "Septic Lift B"
+  cir3_multiply: "1"
+  cir3_phase: "phase_b"
+
+  ### Circuit 4 ###
+  cir4_name: "Well Pump"
+  cir4_multiply: "2"
+  cir4_phase: "phase_a"
+
+  ### Circuit 5 ###
+  cir5_name: "Radon Fan"
+  cir5_multiply: "1"
+  cir5_phase: "phase_a"
+
+esphome:
+  name: ${tech_name}
+  friendly_name: ${display_name}
+  # Added platformio_options for better compilation
+  platformio_options:
+    board_build.flash_mode: dio
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+  services:
+    - service: play_rtttl
+      variables:
+        song_str: string
+      then:
+        - rtttl.play:
+            rtttl: !lambda 'return song_str;'
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  fast_connect: true
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${display_name}_AP
+    password: !secret wifi_fallback_pw
+
+# Added captive portal for easier WiFi configuration
+captive_portal:
+
+# Added web server for debugging (optional)
+web_server:
+  port: 80
+  version: 3
+
+######### EMPORIA VUE STANDARD ESPHOME CONFIG #########
+
+external_components:
+  - source: github://emporia-vue-local/esphome@dev
+    components:
+      - emporia_vue
+    refresh: 1d  # Added refresh interval
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: recommended
+    # Added advanced configuration
+    sdkconfig_options:
+      CONFIG_FREERTOS_UNICORE: "false"
+      CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "true"
+
+# Enable logging with better configuration
+logger:
+  level: INFO
+  baud_rate: 0  # Disable UART logging to improve performance
+  logs:
+    # More specific logging configuration
+    sensor: WARN
+    emporia_vue: INFO
+
+# Updated preferences with better interval
+preferences:
+  flash_write_interval: 6h  # More frequent saves for energy data
+
+output:
+  - platform: ledc
+    pin: GPIO12
+    id: buzzer
+    frequency: 2000Hz  # Added explicit frequency
+  - platform: gpio
+    pin: GPIO27
+    id: buzzer_gnd
+
+rtttl:
+  output: buzzer
+  on_finished_playback:
+    - logger.log: 'Song ended!'
+
+button:
+  - platform: template
+    name: "Two Beeps"
+    icon: "mdi:bell"
+    on_press:
+      - rtttl.play: "two short:d=4,o=5,b=100:16e6,16e6"
+  
+  # Added restart button for convenience
+  - platform: restart
+    name: "Restart"
+    icon: "mdi:restart"
+    entity_category: diagnostic
+
+light:
+  - platform: status_led
+    name: "Status LED"
+    pin: 
+      number: 23
+      inverted: false
+    restore_mode: ALWAYS_ON
+    entity_category: diagnostic
+
+######### SENSOR CONFIG #########
+
+i2c:
+  sda: 21
+  scl: 22
+  scan: false
+  frequency: 400kHz
+  timeout: 10ms  # Increased timeout for reliability
+  id: i2c_a
+
+time:
+  - platform: sntp
+    id: my_time
+    timezone: America/Denver  # Added timezone (adjust as needed)
+
+# Updated filter references with better naming
+.default_filters:
+  - &throttle_avg
+    # Average all raw readings over 5 seconds
+    throttle_average: 5s
+  - &throttle_time
+    # Send updates every 60 seconds
+    throttle: 60s
+  - &invert_positive
+    # Invert and ensure positive values
+    lambda: 'return max(-x, 0.0f);'
+  - &positive_only
+    # Filter out negative values
+    lambda: 'return max(x, 0.0f);'
+  - &absolute_value
+    # Take absolute value
+    lambda: 'return abs(x);'
+
+sensor:
+  # Added WiFi signal strength sensor
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+    
+  # Added uptime sensor
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: emporia_vue
+    i2c_id: i2c_a
+    phases:
+      - id: phase_a
+        input: BLACK
+        calibration: 0.022
+        voltage:
+          name: "Panel Phase A Voltage"
+          device_class: voltage
+          state_class: measurement
+          unit_of_measurement: "V"
+          accuracy_decimals: 1
+          filters: [*throttle_avg, *positive_only]
+        frequency:
+          name: "Panel Phase A Frequency"
+          device_class: frequency
+          state_class: measurement
+          unit_of_measurement: "Hz"
+          accuracy_decimals: 1
+          filters: [*throttle_avg, *positive_only]
+      - id: phase_b
+        input: RED
+        calibration: 0.022
+        voltage:
+          name: "Panel Phase B Voltage"
+          device_class: voltage
+          state_class: measurement
+          unit_of_measurement: "V"
+          accuracy_decimals: 1
+          filters: [*throttle_avg, *positive_only]
+        phase_angle:
+          name: "Panel Phase B Phase Angle"
+          device_class: power_factor
+          state_class: measurement
+          unit_of_measurement: "°"
+          accuracy_decimals: 1
+          filters: [*throttle_avg, *positive_only]
+    ct_clamps:
+      # Main panel power sensors
+      - phase_id: phase_a
+        input: "A"
+        power:
+          id: phase_a_power
+          device_class: power
+          state_class: measurement
+          unit_of_measurement: "W"
+          filters: [*invert_positive]
+      - phase_id: phase_b
+        input: "B"
+        power:
+          id: phase_b_power
+          device_class: power
+          state_class: measurement
+          unit_of_measurement: "W"
+          filters: [*invert_positive]
+
+      # INDIVIDUAL CIRCUIT MONITORING - using substitutions for easy management
+      - { phase_id: ${cir1_phase}, input: "1", power: { id: cir1, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir1_multiply} ] } }
+      - { phase_id: ${cir2_phase}, input: "2", power: { id: cir2, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir2_multiply} ] } }
+      - { phase_id: ${cir3_phase}, input: "3", power: { id: cir3, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir3_multiply} ] } }
+      - { phase_id: ${cir4_phase}, input: "4", power: { id: cir4, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir4_multiply} ] } }
+      - { phase_id: ${cir5_phase}, input: "5", power: { id: cir5, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir5_multiply} ] } }
+
+    on_update:
+      then:
+        - component.update: total_power
+
+  ###### COPY POWER SENSORS FOR OVERALL PANEL ######
+  - platform: copy
+    name: "Panel Phase A Power"
+    source_id: phase_a_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "Panel Phase B Power"
+    source_id: phase_b_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "Panel Total Power"
+    source_id: total_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "Panel Balance Power"
+    source_id: balance_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+
+  ###### COPY POWER SENSORS FOR INDIVIDUAL CIRCUITS ######
+  - platform: copy
+    name: "${cir1_name} Power"
+    source_id: cir1
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "${cir2_name} Power"
+    source_id: cir2
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "${cir3_name} Power"
+    source_id: cir3
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "${cir4_name} Power"
+    source_id: cir4
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "${cir5_name} Power"
+    source_id: cir5
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+
+  ###### TEMPLATE SENSORS FOR CALCULATIONS ######
+  - platform: template
+    name: "Panel Total Power Internal"
+    id: total_power
+    lambda: return id(phase_a_power).state + id(phase_b_power).state;
+    update_interval: never
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    internal: true
+
+  - platform: template
+    name: "Panel Balance Power Internal"
+    id: balance_power
+    lambda: !lambda |-   
+      return max(0.0f, id(total_power).state - 
+        id(cir1).state -
+        id(cir2).state -
+        id(cir3).state -
+        id(cir4).state -
+        id(cir5).state); 
+    update_interval: never
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    internal: true
+
+  ###### ENERGY SENSORS FOR OVERALL PANEL ######
+  - platform: total_daily_energy
+    name: "Panel Total Daily Energy"
+    power_id: total_power
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+
+  - platform: total_daily_energy
+    name: "Panel Balance Daily Energy"
+    power_id: balance_power
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+
+  ###### ENERGY SENSORS FOR INDIVIDUAL CIRCUITS ######
+  - platform: total_daily_energy
+    name: "${cir1_name} Energy"
+    power_id: cir1
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+    
+  - platform: total_daily_energy
+    name: "${cir2_name} Energy"
+    power_id: cir2
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+    
+  - platform: total_daily_energy
+    name: "${cir3_name} Energy"
+    power_id: cir3
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+    
+  - platform: total_daily_energy
+    name: "${cir4_name} Energy"
+    power_id: cir4
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+    
+  - platform: total_daily_energy
+    name: "${cir5_name} Energy"
+    power_id: cir5
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters: [*throttle_time]
+
+# Added text sensors for better diagnostics
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC Address"
+      entity_category: diagnostic
