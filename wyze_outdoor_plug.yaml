@@ -1,44 +1,76 @@
 substitutions:
+  display_name: Wyze Outdoor 2 - Chicken Coop
   # Higher value gives lower watt readout
   current_res: "0.001"
   # Lower value gives lower voltage readout
-  voltage_div: "770"  
-  
-esphome:
-  name: $name
-  project:
-    name: alexlmiller.wyze_outdoor_plug
-    version: 1.0.0
+  voltage_div: "770"
 
-  platform: ESP32
+esphome:
+  name: wyze-outdoor-2-chicken-coop
+  friendly_name: ${display_name}
+  on_boot:
+    priority: 600
+    then:
+      - delay: 2s  # Wait for components to initialize
+      - lambda: |-
+          ESP_LOGD("boot", "Starting custom restore mode logic");
+          
+          // Get the current restore mode settings
+          std::string restore_mode1 = id(relay1_restore_mode_select).state;
+          std::string restore_mode2 = id(relay2_restore_mode_select).state;
+          
+          ESP_LOGD("boot", "Relay1 restore mode: %s", restore_mode1.c_str());
+          ESP_LOGD("boot", "Relay2 restore mode: %s", restore_mode2.c_str());
+          
+          // Handle Relay1 custom restore logic
+          if (restore_mode1 == "Restore On") {
+            ESP_LOGD("boot", "Setting Relay1 ON");
+            id(relay1).turn_on();
+          } else if (restore_mode1 == "Opposite Last State") {
+            ESP_LOGD("boot", "Toggling Relay1 to opposite of last state");
+            id(relay1).toggle();
+          }
+          // "Restore Off" and "Restore Last State" are handled by ESPHome's built-in restore_mode
+          
+          // Handle Relay2 custom restore logic  
+          if (restore_mode2 == "Restore On") {
+            ESP_LOGD("boot", "Setting Relay2 ON");
+            id(relay2).turn_on();
+          } else if (restore_mode2 == "Opposite Last State") {
+            ESP_LOGD("boot", "Toggling Relay2 to opposite of last state");
+            id(relay2).toggle();
+          }
+
+esp32:
   board: esp-wrover-kit
 
 # Enable logging
 logger:
+  level: INFO
+  logs:
+    hlw8012: WARN  # Reduce noise from power sensor
 
 # Enable Home Assistant API
 api:
+  encryption:
+    key: !secret api_key
 
 ota:
-  platform: esphome
+  - platform: esphome
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: ${display_name}_AP
-    password: !secret wifi_pass
-    ap_timeout: 3min
+    password: !secret wifi_fallback_pw
+  # Improve reliability
+  power_save_mode: none
+  fast_connect: true
 
 captive_portal:
-
-#web_server:
-
-#esp32_ble_tracker:
-#   scan_parameters:
-#     active: false
 
 switch:
   - platform: gpio
@@ -47,38 +79,77 @@ switch:
       number: GPIO15
       inverted: false
     id: relay1
+    restore_mode: ALWAYS_OFF
     on_turn_on:
       - light.turn_on: relay1_led
     on_turn_off:
       - light.turn_off: relay1_led
+    
   - platform: gpio
     name: ${display_name} Relay2
     pin:
       number: GPIO32
       inverted: false
     id: relay2
+    restore_mode: ALWAYS_OFF
     on_turn_on:
       - light.turn_on: relay2_led
     on_turn_off:
       - light.turn_off: relay2_led
+    
   - platform: restart
     name: ${display_name} Restart
+
+select:
+  - platform: template
+    name: "${display_name} Relay1 Restore Mode"
+    id: relay1_restore_mode_select
+    options:
+      - "Restore Off"
+      - "Restore On"
+      - "Restore Last State"
+      - "Opposite Last State"
+    initial_option: "Restore Off"
+    optimistic: true
+    restore_value: true  # Remember selection across reboots
+    set_action:
+      - lambda: |-
+          ESP_LOGD("select", "Relay1 restore mode changed to: %s", x.c_str());
+          // We don't change the actual restore_mode here since we handle it in on_boot
+          // The built-in restore modes are overridden by our custom logic
+
+  - platform: template
+    name: "${display_name} Relay2 Restore Mode"
+    id: relay2_restore_mode_select
+    options:
+      - "Restore Off"
+      - "Restore On"
+      - "Restore Last State"
+      - "Opposite Last State"
+    initial_option: "Restore Off"
+    optimistic: true
+    restore_value: true  # Remember selection across reboots
+    set_action:
+      - lambda: |-
+          ESP_LOGD("select", "Relay2 restore mode changed to: %s", x.c_str());
+          // We don't change the actual restore_mode here since we handle it in on_boot
+          // The built-in restore modes are overridden by our custom logic
 
 output:
   - platform: gpio
     pin: GPIO19
-    inverted: True
+    inverted: true
     id: relay1_led_gpio
   - platform: gpio
     pin: GPIO16
-    inverted: True
+    inverted: true
     id: relay2_led_gpio
 
 light:
   - platform: binary
     name: "Relay1 LED"
     id: relay1_led
-    internal: true    
+    internal: true
     output: relay1_led_gpio
   - platform: binary
     name: "Relay2 LED"
@@ -91,7 +162,12 @@ sensor:
     pin: GPIO34
     name: "${display_name} LUX"
     update_interval: 10s
-    attenuation: 11db
+    attenuation: 12db
+    filters:
+      # Smooth out readings
+      - sliding_window_moving_average:
+          window_size: 3
+          send_every: 1
   - platform: hlw8012
     sel_pin:
       number: GPIO25
@@ -101,45 +177,76 @@ sensor:
     current_resistor: ${current_res}
     voltage_divider: ${voltage_div}
     change_mode_every: 3
-    update_interval: 3s    
+    update_interval: 3s
     current:
       name: "${display_name} Amps"
       unit_of_measurement: A
       accuracy_decimals: 2
+      filters:
+        # Filter out noise and impossible readings
+        - lambda: if (x < 0.01) return 0.0; else return x;
     voltage:
       name: "${display_name} Volts"
       unit_of_measurement: V
       accuracy_decimals: 1
+      filters:
+        # Filter out unrealistic voltage readings
+        - lambda: if (x < 80 || x > 300) return {}; else return x;
     power:
       name: "${display_name} Watts"
       unit_of_measurement: W
-      accuracy_decimals: 0    
+      accuracy_decimals: 0
       filters:
         - calibrate_linear:
             - 0.0 -> 0.0
-            - 134 -> 58 
+            - 134 -> 58
+        # Filter out negative power readings
+        - lambda: if (x < 0) return 0.0; else return x;
+
+text_sensor:
+  - platform: template
+    name: "${display_name} Relay1 Restore Mode Text"
+    lambda: |-
+      return id(relay1_restore_mode_select).state;
+    update_interval: 60s
+    icon: "mdi:restore"
+    
+  - platform: template
+    name: "${display_name} Relay2 Restore Mode Text"
+    lambda: |-
+      return id(relay2_restore_mode_select).state;
+    update_interval: 60s
+    icon: "mdi:restore"
 
 binary_sensor:
   - platform: gpio
     internal: true
     pin:
       number: GPIO18
-      mode: INPUT_PULLDOWN
-      inverted: True
+      mode:
+        input: true
+        pulldown: true
+      inverted: true
     name: ${display_name} Button1
+    filters:
+      - delayed_on: 10ms  # Debounce
     on_press:
       - switch.toggle: relay1
   - platform: gpio
     internal: true
     pin:
       number: GPIO17
-      mode: INPUT_PULLDOWN
-      inverted: True
+      mode:
+        input: true
+        pulldown: true
+      inverted: true
     name: ${display_name} Button2
+    filters:
+      - delayed_on: 10ms  # Debounce
     on_press:
       - switch.toggle: relay2
 
 status_led:
   pin:
     number: GPIO5
-    inverted: true  
+    inverted: true
