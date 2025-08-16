@@ -12,34 +12,6 @@ substitutions:
   ### CUSTOMIZE THESE TWO NAMES ###
   display_name: Emporia Vue - House External
   tech_name: emporia-vue-house-external
-  
-  ### CIRCUIT DEFINITIONS ###
-  ## Circuit multipliers (use 2 for 240V, 1 for 120V) / Phase assignments (phase_a or phase_b) ##
-
-  ### Circuit 1 ###
-  cir1_name: "House Heat Pump"
-  cir1_multiply: "2"
-  cir1_phase: "phase_a"
-
-  ### Circuit 2 ###
-  cir2_name: "Septic Lift A"
-  cir2_multiply: "1"
-  cir2_phase: "phase_a"
-
-  ### Circuit 3 ###
-  cir3_name: "Septic Lift B"
-  cir3_multiply: "1"
-  cir3_phase: "phase_b"
-
-  ### Circuit 4 ###
-  cir4_name: "Well Pump"
-  cir4_multiply: "2"
-  cir4_phase: "phase_a"
-
-  ### Circuit 5 ###
-  cir5_name: "Radon Fan"
-  cir5_multiply: "1"
-  cir5_phase: "phase_a"
 
 esphome:
   name: ${tech_name}
@@ -251,12 +223,12 @@ sensor:
           unit_of_measurement: "W"
           filters: [*invert_positive]
 
-      # INDIVIDUAL CIRCUIT MONITORING - using substitutions for easy management
-      - { phase_id: ${cir1_phase}, input: "1", power: { id: cir1, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir1_multiply} ] } }
-      - { phase_id: ${cir2_phase}, input: "2", power: { id: cir2, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir2_multiply} ] } }
-      - { phase_id: ${cir3_phase}, input: "3", power: { id: cir3, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir3_multiply} ] } }
-      - { phase_id: ${cir4_phase}, input: "4", power: { id: cir4, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir4_multiply} ] } }
-      - { phase_id: ${cir5_phase}, input: "5", power: { id: cir5, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: ${cir5_multiply} ] } }
+      # INDIVIDUAL CIRCUIT MONITORING - with proper device classes
+      - { phase_id: phase_a, input: "1", power: { id: cir1, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "2", power: { id: cir2, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only ] } }
+      - { phase_id: phase_b, input: "3", power: { id: cir3, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only ] } }
+      - { phase_id: phase_a, input: "4", power: { id: cir4, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "5", power: { id: cir5, device_class: power, state_class: measurement, unit_of_measurement: "W", filters: [ *positive_only ] } }
 
     on_update:
       then:
@@ -301,7 +273,7 @@ sensor:
 
   ###### COPY POWER SENSORS FOR INDIVIDUAL CIRCUITS ######
   - platform: copy
-    name: "${cir1_name} Power"
+    name: "House Heat Pump Power"
     source_id: cir1
     device_class: power
     state_class: measurement
@@ -310,7 +282,7 @@ sensor:
     filters: [*throttle_avg]
     
   - platform: copy
-    name: "${cir2_name} Power"
+    name: "Septic Lift A Power"
     source_id: cir2
     device_class: power
     state_class: measurement
@@ -319,7 +291,7 @@ sensor:
     filters: [*throttle_avg]
     
   - platform: copy
-    name: "${cir3_name} Power"
+    name: "Septic Lift B Power"
     source_id: cir3
     device_class: power
     state_class: measurement
@@ -328,7 +300,7 @@ sensor:
     filters: [*throttle_avg]
     
   - platform: copy
-    name: "${cir4_name} Power"
+    name: "Well Pump Power"
     source_id: cir4
     device_class: power
     state_class: measurement
@@ -337,7 +309,7 @@ sensor:
     filters: [*throttle_avg]
     
   - platform: copy
-    name: "${cir5_name} Power"
+    name: "Radon Fan Power"
     source_id: cir5
     device_class: power
     state_class: measurement
@@ -397,7 +369,7 @@ sensor:
 
   ###### ENERGY SENSORS FOR INDIVIDUAL CIRCUITS ######
   - platform: total_daily_energy
-    name: "${cir1_name} Energy"
+    name: "House Heat Pump Energy"
     power_id: cir1
     device_class: energy
     state_class: total_increasing
@@ -407,7 +379,7 @@ sensor:
     filters: [*throttle_time]
     
   - platform: total_daily_energy
-    name: "${cir2_name} Energy"
+    name: "Septic Lift A Energy"
     power_id: cir2
     device_class: energy
     state_class: total_increasing
@@ -417,7 +389,7 @@ sensor:
     filters: [*throttle_time]
     
   - platform: total_daily_energy
-    name: "${cir3_name} Energy"
+    name: "Septic Lift B Energy"
     power_id: cir3
     device_class: energy
     state_class: total_increasing
@@ -427,7 +399,7 @@ sensor:
     filters: [*throttle_time]
     
   - platform: total_daily_energy
-    name: "${cir4_name} Energy"
+    name: "Well Pump Energy"
     power_id: cir4
     device_class: energy
     state_class: total_increasing
@@ -437,7 +409,7 @@ sensor:
     filters: [*throttle_time]
     
   - platform: total_daily_energy
-    name: "${cir5_name} Energy"
+    name: "Radon Fan Energy"
     power_id: cir5
     device_class: energy
     state_class: total_increasing
