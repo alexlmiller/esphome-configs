@@ -103,6 +103,7 @@ button:
   - platform: template
     name: "Two Beeps"
     icon: "mdi:bell"
+    entity_category: diagnostic
     on_press:
       - rtttl.play: "two short:d=4,o=5,b=100:16e6,16e6"
   
@@ -110,6 +111,7 @@ button:
   - platform: restart
     name: "Restart"
     icon: "mdi:restart"
+    entity_category: diagnostic
 
 light:
   - platform: status_led
@@ -271,7 +273,9 @@ sensor:
     unit_of_measurement: "kWh"
     accuracy_decimals: 3
     restore: false
-    filters: [*throttle_time]
+    filters:
+      - multiply: 0.001  # Convert Wh to kWh
+      - *throttle_time
 
 # Added text sensors for better diagnostics
 text_sensor:
