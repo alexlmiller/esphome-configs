@@ -13,6 +13,16 @@ substitutions:
   display_name: Emporia Vue - Garage
   tech_name: emporia-vue-garage
 
+  ### CIRCUIT DEFINITIONS - Easy to modify! ###
+  # Format: "Display Name" for each circuit
+  cir1_name: "Sauna"
+  
+  # Circuit multipliers (use 2 for 240V circuits, 1 for 120V)
+  cir1_multiply: "2"
+  
+  # Phase assignments (phase_a or phase_b)
+  cir1_phase: "phase_a"
+
 esphome:
   name: ${tech_name}
   friendly_name: ${display_name}
@@ -222,6 +232,19 @@ sensor:
           state_class: measurement
           unit_of_measurement: "W"
           filters: [*invert_positive]
+          
+      # INDIVIDUAL CIRCUIT MONITORING - using substitutions for easy management
+      - phase_id: ${cir1_phase}
+        input: "1"
+        power:
+          id: cir1
+          device_class: power
+          state_class: measurement
+          unit_of_measurement: "W"
+          filters: 
+            - *positive_only
+            - multiply: ${cir1_multiply}
+            
     on_update:
       then:
         - component.update: total_power
@@ -253,6 +276,27 @@ sensor:
     unit_of_measurement: "W"
     accuracy_decimals: 1
     filters: [*throttle_avg]
+    
+  - platform: copy
+    name: "Balance Power"
+    source_id: balance_power
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+
+  ###### COPY POWER SENSORS FOR INDIVIDUAL CIRCUITS ######
+  - platform: copy
+    name: "${cir1_name} Power"
+    source_id: cir1
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    filters: [*throttle_avg]
+
+  ###### TEMPLATE SENSORS FOR CALCULATIONS ######
 
   - platform: template
     name: "Total Power Internal"
@@ -264,6 +308,19 @@ sensor:
     unit_of_measurement: "W"
     accuracy_decimals: 1
     internal: true  # Keep internal since we have a copy sensor
+
+  - platform: template
+    name: "Balance Power Internal"
+    id: balance_power
+    lambda: !lambda |-   
+      return max(0.0f, id(total_power).state - 
+        id(cir1).state); 
+    update_interval: never
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    internal: true
     
   - platform: total_daily_energy
     name: "Total Daily Energy"
@@ -277,6 +334,31 @@ sensor:
       - multiply: 0.001  # Convert Wh to kWh
       - *throttle_time
 
+  - platform: total_daily_energy
+    name: "Balance Daily Energy"
+    power_id: balance_power
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters:
+      - multiply: 0.001  # Convert Wh to kWh
+      - *throttle_time
+      
+  ###### ENERGY SENSORS FOR INDIVIDUAL CIRCUITS ######
+  - platform: total_daily_energy
+    name: "${cir1_name} Energy"
+    power_id: cir1
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    restore: false
+    filters:
+      - multiply: 0.001  # Convert Wh to kWh
+      - *throttle_time
+      
 # Added text sensors for better diagnostics
 text_sensor:
   - platform: wifi_info
