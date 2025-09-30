@@ -1,370 +1,239 @@
-### NOTES ###
-# Ensure the following secrets are set
-## api_key (for home assistant api)
-## ota_password
-## wifi_ssid
-## wifi_password
-## wifi_fallback_password
-
-######### DEVICE SPECIFIC CONFIG #########
-
-substitutions:
-  ### CUSTOMIZE THESE TWO NAMES ###
-  display_name: Emporia Vue - Garage
-  tech_name: emporia-vue-garage
-
-  ### CIRCUIT DEFINITIONS - Easy to modify! ###
-  # Format: "Display Name" for each circuit
-  cir1_name: "Sauna"
-  
-  # Circuit multipliers (use 2 for 240V circuits, 1 for 120V)
-  cir1_multiply: "2"
-  
-  # Phase assignments (phase_a or phase_b)
-  cir1_phase: "phase_a"
-
 esphome:
-  name: ${tech_name}
-  friendly_name: ${display_name}
-  # Added platformio_options for better compilation
-  platformio_options:
-    board_build.flash_mode: dio
-
-ota:
-  - platform: esphome
-    password: !secret ota_password
-
-api:
-  encryption:
-    key: !secret api_key
-
-  services:
-    - service: play_rtttl
-      variables:
-        song_str: string
-      then:
-        - rtttl.play:
-            rtttl: !lambda 'return song_str;'
-
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  power_save_mode: none
-  fast_connect: true
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
-  ap:
-    ssid: ${display_name}_AP
-    password: !secret wifi_fallback_pw
-
-# Added captive portal for easier WiFi configuration
-captive_portal:
-
-# Added web server for debugging (optional)
-web_server:
-  port: 80
-  version: 3
-
-######### EMPORIA VUE STANDARD ESPHOME CONFIG #########
-
-external_components:
-  - source: github://emporia-vue-local/esphome@dev
-    components:
-      - emporia_vue
-    refresh: 1d  # Added refresh interval
+  name: sauna-controller
+  friendly_name: Sauna Controller
+  project:
+    name: sauna.open_controller
+    version: "1.0"
 
 esp32:
   board: esp32dev
   framework:
     type: esp-idf
-    version: recommended
-    # Added advanced configuration
     sdkconfig_options:
-      CONFIG_FREERTOS_UNICORE: "false"
-      CONFIG_ESP32_DEFAULT_CPU_FREQ_240: "true"
+      CONFIG_ESP_TASK_WDT: "y"
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "30"
 
-# Enable logging with better configuration
 logger:
   level: INFO
-  baud_rate: 0  # Disable UART logging to improve performance
-  logs:
-    # More specific logging configuration
-    sensor: WARN
-    emporia_vue: INFO
+  baud_rate: 0
 
-# Updated preferences with better interval
-preferences:
-  flash_write_interval: 6h  # More frequent saves for energy data
+ota:
+  platform: esphome
+  password: !secret ota_password
 
-output:
-  - platform: ledc
-    pin: GPIO12
-    id: buzzer
-    frequency: 2000Hz  # Added explicit frequency
-  - platform: gpio
-    pin: GPIO27
-    id: buzzer_gnd
+api:
+  encryption:
+    key: !secret api_key
 
-rtttl:
-  output: buzzer
-  on_finished_playback:
-    - logger.log: 'Song ended!'
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${friendly_name}_AP
+    password: !secret wifi_fallback_pw
 
-button:
-  - platform: template
-    name: "Two Beeps"
-    icon: "mdi:bell"
-    entity_category: diagnostic
-    on_press:
-      - rtttl.play: "two short:d=4,o=5,b=100:16e6,16e6"
+web_server:
+  port: 80
   
-  # Added restart button for convenience
-  - platform: restart
-    name: "Restart"
-    icon: "mdi:restart"
-    entity_category: diagnostic
+captive_portal:
+
+# ---------------- Globals ----------------
+globals:
+  - id: fault_latched
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: last_trip_reason
+    type: std::string
+    restore_value: no
+    initial_value: ""
+  - id: session_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: session_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: door_open_since
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+# ---------------- Door Sensor ----------------
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO21
+      mode: INPUT_PULLUP
+      inverted: true
+    id: door_sensor
+    name: "Sauna Door"
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+
+# ---------------- SPI (RTD boards) ----------------
+spi:
+  id: bus_a
+  clk_pin: GPIO18
+  mosi_pin: GPIO17
+  miso_pin: GPIO19
+
+# ---------------- Temperature Sensors (°C, 5s updates) ----------------
+sensor:
+  - platform: max31865
+    cs_pin: GPIO5
+    spi_id: bus_a
+    rtd_nominal_resistance: 100.0
+    reference_resistance: 430.0
+    rtd_wires: 3
+    name: "Ceiling Temp"
+    id: ceiling_temp_c
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 30s
+
+  - platform: max31865
+    cs_pin: GPIO4
+    spi_id: bus_a
+    rtd_nominal_resistance: 100.0
+    reference_resistance: 430.0
+    rtd_wires: 3
+    name: "Bench Temp"
+    id: bench_temp_c
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 5s
+
+# ---------------- Contactor Output ----------------
+output:
+  - platform: gpio
+    pin: GPIO13
+    id: coil_output
+
+  # Lighting PWM
+  - platform: ledc
+    pin: GPIO32
+    id: pwm_r
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: GPIO33
+    id: pwm_g
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: GPIO26
+    id: pwm_b
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: GPIO25
+    id: pwm_w
+    frequency: 19531 Hz
 
 light:
-  - platform: status_led
-    name: "Status LED"
-    pin: 
-      number: 23
-      inverted: false
-    restore_mode: ALWAYS_ON
-    entity_category: diagnostic
+  - platform: rgbw
+    name: "Sauna RGBW Light"
+    red: pwm_r
+    green: pwm_g
+    blue: pwm_b
+    white: pwm_w
+    id: sauna_light
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 1s
 
-######### SENSOR CONFIG #########
+# ---------------- Climate (thermostat drives contactor) ----------------
+climate:
+  - platform: thermostat
+    name: "Sauna Thermostat"
+    id: sauna_thermostat
+    sensor: bench_temp_c
+    min_heating_off_time: 120s
+    min_heating_run_time: 120s
+    min_idle_time: 30s
+    # All Celsius internally (HA will display °F)
+    heat_deadband: 1.1         # ≈ 2°F
+    heat_overrun: 1.1          # ≈ 2°F
+    visual:
+      min_temperature: 65.5    # ≈ 150°F
+      max_temperature: 93.5    # ≈ 200°F
+      temperature_step: 0.5    # ≈ 1°F
+    preset:
+      - name: "Standard"
+        default_target_temperature_low: 82.0 # ≈ 180°F
+    default_preset: "Standard"
 
-i2c:
-  sda: 21
-  scl: 22
-  scan: false
-  frequency: 400kHz
-  timeout: 10ms  # Increased timeout for reliability
-  id: i2c_a
+    heat_action:
+      - if:
+          condition:
+            lambda: 'return !id(fault_latched);'
+          then:
+            - output.turn_on: coil_output
+            - logger.log: "Heat action -> contactor ON"
+          else:
+            - output.turn_off: coil_output
+            - logger.log: "Heat action blocked (fault latched) -> contactor OFF"
 
-time:
-  - platform: sntp
-    id: my_time
-    timezone: America/Denver  # Added timezone (adjust as needed)
+    idle_action:
+      - output.turn_off: coil_output
+      - logger.log: "Idle action -> contactor OFF"
 
-# Updated filter references with better naming
-.default_filters:
-  - &throttle_avg
-    # Average all raw readings over 5 seconds
-    throttle_average: 5s
-  - &throttle_time
-    # Send updates every 60 seconds
-    throttle: 60s
-  - &invert_positive
-    # Invert and ensure positive values
-    lambda: 'return max(-x, 0.0f);'
-  - &positive_only
-    # Filter out negative values
-    lambda: 'return max(x, 0.0f);'
-  - &absolute_value
-    # Take absolute value
-    lambda: 'return abs(x);'
+    on_state:
+      - logger.log:
+          format: "Climate state changed - Current: %.1f°C, Target: %.1f°C, Mode: %s"
+          args: ['x.current_temperature', 'x.target_temperature', 'x.mode']
 
-sensor:
-  # Added WiFi signal strength sensor
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 60s
-    entity_category: diagnostic
-    
-  # Added uptime sensor
-  - platform: uptime
-    name: "Uptime"
-    update_interval: 60s
-    entity_category: diagnostic
-
-  - platform: emporia_vue
-    i2c_id: i2c_a
-    phases:
-      - id: phase_a
-        input: BLACK
-        calibration: 0.022
-        voltage:
-          name: "Phase A Voltage"
-          device_class: voltage
-          state_class: measurement
-          unit_of_measurement: "V"
-          accuracy_decimals: 1
-          filters: [*throttle_avg, *positive_only]
-        frequency:
-          name: "Phase A Frequency"
-          device_class: frequency
-          state_class: measurement
-          unit_of_measurement: "Hz"
-          accuracy_decimals: 1
-          filters: [*throttle_avg, *positive_only]
-      - id: phase_b
-        input: RED
-        calibration: 0.022
-        voltage:
-          name: "Phase B Voltage"
-          device_class: voltage
-          state_class: measurement
-          unit_of_measurement: "V"
-          accuracy_decimals: 1
-          filters: [*throttle_avg, *positive_only]
-        phase_angle:
-          name: "Phase B Phase Angle"
-          device_class: power_factor
-          state_class: measurement
-          unit_of_measurement: "°"
-          accuracy_decimals: 1
-          filters: [*throttle_avg, *positive_only]
-    ct_clamps:
-      - phase_id: phase_a
-        input: "A"
-        power:
-          id: phase_a_power
-          device_class: power
-          state_class: measurement
-          unit_of_measurement: "W"
-          filters: [*invert_positive]
-      - phase_id: phase_b
-        input: "B"
-        power:
-          id: phase_b_power
-          device_class: power
-          state_class: measurement
-          unit_of_measurement: "W"
-          filters: [*invert_positive]
-          
-      # INDIVIDUAL CIRCUIT MONITORING - using substitutions for easy management
-      - phase_id: ${cir1_phase}
-        input: "1"
-        power:
-          id: cir1
-          device_class: power
-          state_class: measurement
-          unit_of_measurement: "W"
-          filters: 
-            - *positive_only
-            - multiply: ${cir1_multiply}
-            
-    on_update:
-      then:
-        - component.update: total_power
-
-  # Copy sensors with proper device classes and state classes
-  - platform: copy
-    name: "Phase A Power"
-    source_id: phase_a_power
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    filters: [*throttle_avg]
-    
-  - platform: copy
-    name: "Phase B Power"
-    source_id: phase_b_power
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    filters: [*throttle_avg]
-    
-  - platform: copy
-    name: "Total Power"
-    source_id: total_power
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    filters: [*throttle_avg]
-    
-  - platform: copy
-    name: "Balance Power"
-    source_id: balance_power
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    filters: [*throttle_avg]
-
-  ###### COPY POWER SENSORS FOR INDIVIDUAL CIRCUITS ######
-  - platform: copy
-    name: "${cir1_name} Power"
-    source_id: cir1
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    filters: [*throttle_avg]
-
-  ###### TEMPLATE SENSORS FOR CALCULATIONS ######
-
+# ---------------- Clear Fault Button ----------------
+button:
   - platform: template
-    name: "Total Power Internal"
-    id: total_power
-    lambda: return id(phase_a_power).state + id(phase_b_power).state;
-    update_interval: never
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    internal: true  # Keep internal since we have a copy sensor
+    name: "Clear Fault"
+    on_press:
+      - lambda: |-
+          // 210°F = 98.9°C
+          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < 98.9) {
+            id(fault_latched) = false;
+            id(last_trip_reason) = "";
+            ESP_LOGI("main", "Fault cleared.");
+          } else {
+            ESP_LOGW("main", "Cannot clear fault: still in overtemp or sensor invalid.");
+          }
 
-  - platform: template
-    name: "Balance Power Internal"
-    id: balance_power
-    lambda: !lambda |-   
-      return max(0.0f, id(total_power).state - 
-        id(cir1).state); 
-    update_interval: never
-    device_class: power
-    state_class: measurement
-    unit_of_measurement: "W"
-    accuracy_decimals: 1
-    internal: true
-    
-  - platform: total_daily_energy
-    name: "Total Daily Energy"
-    power_id: total_power
-    device_class: energy
-    state_class: total_increasing
-    unit_of_measurement: "kWh"
-    accuracy_decimals: 3
-    restore: false
-    filters:
-      - multiply: 0.001  # Convert Wh to kWh
-      - *throttle_time
+# ---------------- Safety & Control Guardrail ----------------
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          // Door timeout only when heating mode is enabled
+          if (id(door_sensor).state && id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) {
+            if (id(door_open_since) == 0) id(door_open_since) = millis();
+            else if (millis() - id(door_open_since) > 60000) { // 60s
+              id(fault_latched) = true;
+              id(last_trip_reason) = "Door open too long";
+              id(door_open_since) = 0;
+              id(coil_output).turn_off();
+              ESP_LOGW("main", "Door open timeout fault!");
+            }
+          } else {
+            id(door_open_since) = 0;
+          }
 
-  - platform: total_daily_energy
-    name: "Balance Daily Energy"
-    power_id: balance_power
-    device_class: energy
-    state_class: total_increasing
-    unit_of_measurement: "kWh"
-    accuracy_decimals: 3
-    restore: false
-    filters:
-      - multiply: 0.001  # Convert Wh to kWh
-      - *throttle_time
-      
-  ###### ENERGY SENSORS FOR INDIVIDUAL CIRCUITS ######
-  - platform: total_daily_energy
-    name: "${cir1_name} Energy"
-    power_id: cir1
-    device_class: energy
-    state_class: total_increasing
-    unit_of_measurement: "kWh"
-    accuracy_decimals: 3
-    restore: false
-    filters:
-      - multiply: 0.001  # Convert Wh to kWh
-      - *throttle_time
-      
-# Added text sensors for better diagnostics
+          // Software high temp safety (210°F = 98.9°C)
+          if (id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state > 98.9) {
+            id(fault_latched) = true;
+            id(last_trip_reason) = "Software high temperature limit";
+            id(coil_output).turn_off();
+            ESP_LOGW("main", "Software high temperature fault at %.1f°C!", id(ceiling_temp_c).state);
+          }
+
+          // Absolute guard
+          if (id(fault_latched) || id(sauna_thermostat).mode != climate::CLIMATE_MODE_HEAT) {
+            id(coil_output).turn_off();
+          }
+
 text_sensor:
-  - platform: wifi_info
-    ip_address:
-      name: "IP Address"
-      entity_category: diagnostic
-    mac_address:
-      name: "MAC Address"
-      entity_category: diagnostic
+  - platform: template
+    name: "Last Trip Reason"
+    id: last_trip_reason_text
+    lambda: |-
+      return id(last_trip_reason);
